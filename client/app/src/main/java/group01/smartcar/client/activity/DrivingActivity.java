@@ -9,6 +9,8 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.drawable.Drawable;
+import android.media.AudioAttributes;
+import android.media.AudioManager;
 import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -21,6 +23,7 @@ import android.view.View;
 import android.widget.ImageView;
 import android.widget.Switch;
 import android.widget.Toast;
+import android.media.SoundPool;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.RequiresApi;
@@ -92,6 +95,10 @@ public class DrivingActivity extends AppCompatActivity {
     private ScheduledFuture<?> proximitySensorUpdater;
     private ScheduledFuture<?> batteryRenderer;
 
+    private SoundPool soundPool;
+    private int soundDrive, soundPark, soundProximity;
+    private int soundDriveStream = -1, soundParkStream = -1, soundProximityStream = -1;
+
     @SuppressLint("ClickableViewAccessibility")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -147,6 +154,29 @@ public class DrivingActivity extends AppCompatActivity {
         proximityIndicator.setVisibility(View.VISIBLE);
         proximityIndicator.setZOrderMediaOverlay(true);
         proximityIndicator.setAlpha(0.5f);
+
+        // Set maxStreams to 3 if all files desired to be played concurrently
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            AudioAttributes audioAttributes = new AudioAttributes
+                    .Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build();
+            soundPool = new SoundPool
+                    .Builder()
+                    .setMaxStreams(2)
+                    .setAudioAttributes(audioAttributes)
+                    .build();
+        } else {
+            soundPool = new SoundPool(2, AudioManager.STREAM_MUSIC, 0);
+        }
+
+        // Media files can be substituted through res.raw
+        // .mp3 preferred
+        soundDrive = soundPool.load(this, R.raw.drive, 1);
+        soundPark = soundPool.load(this, R.raw.park, 1);
+        soundProximity = soundPool.load(this, R.raw.proximity, 1);
+
     }
 
 
@@ -258,14 +288,6 @@ public class DrivingActivity extends AppCompatActivity {
             final Drawable track = ResourcesCompat.getDrawable(getResources(), R.drawable.ic_switch_track, null);
             final Drawable trackActive = ResourcesCompat.getDrawable(getResources(), R.drawable.ic_switch_track_active, null);
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                vibrationEffect1 = VibrationEffect.createOneShot(100, VibrationEffect.EFFECT_HEAVY_CLICK);
-                vibrator.cancel();
-                vibrator.vibrate(vibrationEffect1);
-            } else {
-                vibrator.vibrate(100);
-            }
-
             if(isChecked) {
                 car.start();
                 sw.setThumbDrawable(thumbActive);
@@ -287,6 +309,10 @@ public class DrivingActivity extends AppCompatActivity {
 
             } else {
                 car.stop();
+
+                soundPool.pause(soundProximityStream);
+                soundPool.pause(soundDriveStream);
+
                 sw.setThumbDrawable(thumb);
                 sw.setTrackDrawable(track);
 
@@ -308,7 +334,14 @@ public class DrivingActivity extends AppCompatActivity {
                         .setDuration(animationDuration * 2)
                         .setListener(null);
 
-
+                soundParkStream = soundPool.play(soundPark, 0.2f, 0.2f, 2, 0, 0.5f);
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                vibrationEffect1 = VibrationEffect.createOneShot(100, VibrationEffect.EFFECT_HEAVY_CLICK);
+                vibrator.cancel();
+                vibrator.vibrate(vibrationEffect1);
+            } else {
+                vibrator.vibrate(100);
             }
         });
 
@@ -342,18 +375,25 @@ public class DrivingActivity extends AppCompatActivity {
                     joystick.setX((((motionEvent.getRawX() - joystickRadius) - joystick.getLeft()) * joystickRadiusMax/touchDistance) + joystick.getLeft());
                     joystick.setY((((motionEvent.getRawY() - joystickRadius) - joystick.getTop()) * joystickRadiusMax/touchDistance) + joystick.getTop());
                 }
-                    onJoystickMoved(drivingSensitivity,(joystick.getX() - joystickInitX) / joystickRadius, (joystick.getY() - joystickInitY) / joystickRadius, joystick.getId());
-                    return true;
+                if (soundDriveStream == -1) {
+                    soundDriveStream = soundPool.play(soundDrive, 1, 1, 0, -1, 0.5f);
                 }
+                onJoystickMoved(drivingSensitivity,(joystick.getX() - joystickInitX) / joystickRadius, (joystick.getY() - joystickInitY) / joystickRadius, joystick.getId());
+                return true;
+            }
 
-                if (motionEvent.getAction() == MotionEvent.ACTION_UP) {
+            if (motionEvent.getAction() == MotionEvent.ACTION_UP) {
                     animJoystickX.start();
                     animJoystickY.start();
                     onJoystickMoved(drivingSensitivity,0, 0, joystick.getId());
+                    if (soundDriveStream != -1) {
+                        soundPool.pause(soundDriveStream);
+                        soundDriveStream = -1;
+                    }
                     return true;
-                }
-                return false;
-            });
+            }
+            return false;
+        });
     }
 
 
@@ -487,6 +527,8 @@ public class DrivingActivity extends AppCompatActivity {
 
         if (distance > 0) {
             proximityIndicator.setFrontIndicatorLevel(ProximityIndicator.IndicatorLevel.HIGH);
+
+            soundProximityStream = soundPool.play(soundProximity, 0.05f, 0.05f, 1, 0, 2);
             return;
         }
 
@@ -506,6 +548,7 @@ public class DrivingActivity extends AppCompatActivity {
 
         if (distance > 0) {
             proximityIndicator.setBackIndicatorLevel(ProximityIndicator.IndicatorLevel.HIGH);
+            soundProximityStream = soundPool.play(soundProximity, 0.05f, 0.05f, 0, 1, 2);
             return;
         }
 
